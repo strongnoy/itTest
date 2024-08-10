@@ -15,7 +15,7 @@ print(api)
 bot = telebot.TeleBot(api)
 
 ADMINS = ['strongnoy', 'HolyRam', 'gsora_1', 'azarovrom']
-
+query_route = 'https://89.108.77.99:5001/api/'
 
 class QuestionData:
     def __init__(self):
@@ -36,6 +36,11 @@ class Question:
     difficulty: 0
     text: str
     answers: List[Answer]
+
+@dataclass
+class Test:
+    questions: List[Question]
+    name: str
 
 
 question_data = {}
@@ -66,11 +71,21 @@ def callback_create_test(call):
         bot.send_message(call.message.chat.id, 'Напиши заголовок теста', reply_markup=ForceReply())
         bot.register_next_step_handler(call.message, get_test_title)
 
+
 def get_test_title(message):
-    if not is_admin(message.from_user.username):
-        bot.answer_callback_query(message.id, "У вас нет прав для выполнения этой команды.")
-        return
-    else:
+        test = Test(name=message.text, questions=[])
+        bot.send_message(message.chat.id, 'Введи количество вопросов')
+        bot.register_next_step_handler(message, create_questions, test=test)
+
+def create_questions(message, test):
+    amount_of_questions = message.text
+    while amount_of_questions > 0:
+        create_question(message)
+
+
+
+
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "create_question")
 def callback_create_question(call):
@@ -78,15 +93,13 @@ def callback_create_question(call):
         bot.answer_callback_query(call.id, "У вас нет прав для выполнения этой команды.")
         return
     else:
-        bot.send_message(call.message.chat.id, 'Напиши заголовок вопроса', reply_markup=ForceReply())
-        bot.register_next_step_handler(call.message, get_question_title)
+        create_question(call.message)
 
+def create_question(message):
+    bot.send_message(message.chat.id, 'Напиши заголовок вопроса', reply_markup=ForceReply())
+    bot.register_next_step_handler(message, get_question_title)
 
 def get_question_title(message):
-    if not is_admin(message.from_user.username):
-        bot.reply_to(message, 'У вас нет прав')
-        return
-
     title = message.text
     user_id = message.from_user.id
     question_data[user_id] = QuestionData()
@@ -97,10 +110,6 @@ def get_question_title(message):
 
 
 def get_correct_answer(message):
-    if not is_admin(message.from_user.username):
-        bot.reply_to(message, 'Нет прав')
-        return
-
     correct_answer = message.text
     user_id = message.from_user.id
     question_data[user_id].correct_answer = correct_answer
@@ -109,25 +118,13 @@ def get_correct_answer(message):
     bot.register_next_step_handler(message, get_wrong_answers)
 
 
-def dataclass_to_dict(obj):
-    if isinstance(obj, list):
-        return [dataclass_to_dict(item) for item in obj]
-    elif is_dataclass(obj):
-        return asdict(obj)
-    else:
-        return obj
-
-
-def get_wrong_answers(message):
-    if not is_admin(message.from_user.username):
-        bot.reply_to(message, 'Нет прав')
-        return
-
+'''Метод обёртка для получения неправильных ответов'''
+def get_wrong_answer_wrapper(message):
     wrong_answers_text = message.text
     wrong_answers = [answer.strip() for answer in wrong_answers_text.split(';')]
     if len(wrong_answers) != 3:
         bot.reply_to(message, "Напишите ровно три ответа")
-        bot.register_next_step_handler(message, get_wrong_answers)
+        bot.register_next_step_handler(message, get_wrong_answer_wrapper)
 
     user_id = message.from_user.id
     question_data[user_id].wrong_answers = wrong_answers
@@ -141,10 +138,21 @@ def get_wrong_answers(message):
 
     question_dict = dataclass_to_dict(question)
     question_json = json.dumps(question_dict, ensure_ascii=False, indent=4)
-    response = requests.post('https://89.108.77.99:5001//api/Question/create-question', data=question_json,
+    return question_json
+
+def get_wrong_answers(message):
+    send_post_request(get_wrong_answer_wrapper(message), f'{query_route}Question/create-question' )
+
+def send_post_request(json, route):
+    response = requests.post(route, data=json,
                              headers={'Content-Type': 'application/json'}, verify=False)
-
-
+def dataclass_to_dict(obj):
+    if isinstance(obj, list):
+        return [dataclass_to_dict(item) for item in obj]
+    elif is_dataclass(obj):
+        return asdict(obj)
+    else:
+        return obj
 @bot.message_handler(commands=['getquestion'])
 def get_question(message):
     try:
@@ -164,10 +172,13 @@ def get_question(message):
         bot.reply_to(message, f"Ошибка {e}")
 
 
+
 @bot.message_handler(commands=['getRandomQuestion'])
+
 def get_random_question(message):
+    '''Запрос получения случайного вопроса к АПИ'''
     try:
-        response = requests.get('https://89.108.77.99:5001/api/Question/get-question-random', verify=False)
+        response = requests.get(f'{query_route}Question/get-question-random', verify=False)
         response.raise_for_status()
         string = response.json()
         string = json.dumps(string)
@@ -192,7 +203,7 @@ def get_random_question(message):
         bot.reply_to(message, f"Ошибка {e}")
 
 
-bot.polling(none_stop=True, interval=0)
+bot.polling(none_stop=True, interval=30)
 # @bot.message_handler(content_types=['text'])
 # def echo(message):
 #     bot.reply_to(message, message.text)
